@@ -1,91 +1,110 @@
 import React, { useEffect, useState } from 'react';
-import io from 'socket.io-client';
+import { createClient } from '@supabase/supabase-js';
 
-// YOUR SPECIFIC IP ADDRESS
-const socket = io('http://192.168.1.162:3001');
+// Pulling keys from .env file
+const SUPABASE_URL = 'https://soxrnpgogsfhxthktcme.supabase.co'
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNveHJucGdvZ3NmaHh0aGt0Y21lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4NDAyOTIsImV4cCI6MjA4NzQxNjI5Mn0.xATys-aD-tw9XKvrZRkB5xUuQVGs6jtTgOIu_aZ3PiU';
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const CHANNEL_NAME = 'india-broadcast-alpha';
 
 function App() {
-  const [message, setMessage] = useState("");
-  const [logs, setLogs] = useState([]);
-  const [isConnected, setIsConnected] = useState(socket.connected);
+  const [status, setStatus] = useState('Connecting...');
+  const [messages, setMessages] = useState([]);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
-  // 1. Request Permission as soon as the app loads
-  if ("Notification" in window) {
-    Notification.requestPermission().then(permission => {
-      console.log("Notification permission:", permission);
+    // 1. Request Permission
+    if ("Notification" in window) {
+      Notification.requestPermission();
+    }
+
+    // 2. Subscribe to the Global Channel
+    const channel = supabase.channel(CHANNEL_NAME, {
+      config: { broadcast: { self: true } }, 
     });
-  }
 
-  socket.on('receive_update', (data) => {
-    // 2. Trigger the SYSTEM notification bar
-    if (Notification.permission === "granted") {
-      const options = {
-        body: data.text,
-        requireInteraction: true, // Keeps it on screen until they tap it
-        vibrate: [200, 100, 200]
-      };
-      
-      // This is what puts it in the notification tray
-      new Notification("BROADCAST ALPHA", options);
-    }
+    channel
+      .on('broadcast', { event: 'alert' }, (payload) => {
+        const { text, time } = payload.payload;
 
-    // 3. Fallback: Internal alert and vibration
-    if ("vibrate" in navigator) {
-      navigator.vibrate([500, 100, 500]);
-    }
-  });
+        // Show System Notification
+        if (Notification.permission === "granted") {
+          new Notification("🚨 TRIP ALERT", {
+            body: text,
+            vibrate: [200, 100, 200]
+          });
+        }
 
-  return () => socket.off('receive_update');
-}, []);
-  const handleSend = () => {
-    if (message.trim()) {
-      socket.emit('send_update', { 
-        text: message, 
-        time: new Date().toLocaleTimeString() 
+        // Phone Vibrate
+        if ("vibrate" in navigator) {
+          navigator.vibrate([300, 100, 300]);
+        }
+
+        setMessages((prev) => [{ text, time }, ...prev]);
+      })
+      .subscribe((subStatus) => {
+        if (subStatus === 'SUBSCRIBED') setStatus('ONLINE (Global)');
       });
-      setMessage("");
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  const sendAlert = async () => {
+    setSending(true);
+    try {
+      await supabase.channel(CHANNEL_NAME).send({
+        type: 'broadcast',
+        event: 'alert',
+        payload: { 
+          text: "ALPHA TEST: Move to the assembly point!", 
+          time: new Date().toLocaleTimeString() 
+        },
+      });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSending(false);
     }
   };
 
   return (
-    <div style={{ textAlign: 'center', padding: '40px', fontFamily: 'sans-serif' }}>
-      <h1 style={{ color: '#ff9933' }}>India Comms Test</h1>
-      <p>Connection: 
-        <span style={{ color: isConnected ? 'green' : 'red', fontWeight: 'bold' }}>
-          {isConnected ? " ONLINE" : " OFFLINE"}
-        </span>
-      </p>
+    <div style={styles.container}>
+      <div style={styles.card}>
+        <h2 style={styles.title}>Comms Alpha</h2>
+        <p style={{ color: status.includes('ONLINE') ? '#138808' : '#e63946' }}>
+          Status: <strong>{status}</strong>
+        </p>
 
-      <div style={{ marginBottom: '20px' }}>
-        <input 
-          value={message} 
-          onChange={(e) => setMessage(e.target.value)} 
-          placeholder="Enter stealth update..." 
-          style={{ padding: '12px', width: '70%', borderRadius: '5px', border: '1px solid #ccc' }}
-        />
-        <br /><br />
         <button 
-          onClick={handleSend} 
-          style={{ padding: '12px 30px', backgroundColor: '#138808', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}
+          onClick={sendAlert} 
+          disabled={sending}
+          style={{ ...styles.btn, backgroundColor: sending ? '#ccc' : '#138808' }}
         >
-          BROADCAST TO ALL
+          {sending ? 'TRANSMITTING...' : 'SEND REMOTE ALERT'}
         </button>
-      </div>
 
-      <hr />
-
-      <div style={{ textAlign: 'left', maxWidth: '400px', margin: '0 auto' }}>
-        <h3>History:</h3>
-        {logs.map((log, i) => (
-          <div key={i} style={{ background: '#f4f4f4', padding: '10px', marginBottom: '10px', borderRadius: '5px', borderLeft: '5px solid #138808' }}>
-            <small>{log.time}</small>
-            <p style={{ margin: '5px 0' }}>{log.text}</p>
-          </div>
-        ))}
+        <div style={styles.log}>
+          <p style={{ fontSize: '12px', fontWeight: 'bold' }}>RECENT ALERTS</p>
+          {messages.map((m, i) => (
+            <div key={i} style={styles.logItem}>
+              <small>{m.time}</small>
+              <div>{m.text}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
+
+const styles = {
+  container: { display: 'flex', justifyContent: 'center', padding: '20px', backgroundColor: '#f0f2f5', minHeight: '100vh', fontFamily: 'sans-serif' },
+  card: { backgroundColor: 'white', padding: '30px', borderRadius: '15px', width: '100%', maxWidth: '350px', textAlign: 'center', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' },
+  title: { color: '#1a1a1a', marginBottom: '5px' },
+  btn: { width: '100%', padding: '15px', color: 'white', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', marginTop: '20px' },
+  log: { marginTop: '30px', textAlign: 'left' },
+  logItem: { padding: '10px', borderBottom: '1px solid #eee' }
+};
 
 export default App;
